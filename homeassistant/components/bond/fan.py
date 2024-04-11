@@ -27,7 +27,7 @@ from homeassistant.util.percentage import (
 )
 from homeassistant.util.scaling import int_states_in_range
 
-from .const import DOMAIN, SERVICE_SET_FAN_SPEED_TRACKED_STATE
+from .const import DOMAIN, SERVICE_CALL_ACTION, SERVICE_SET_FAN_SPEED_TRACKED_STATE
 from .entity import BondEntity
 from .models import BondData
 from .utils import BondDevice, BondHub
@@ -35,6 +35,7 @@ from .utils import BondDevice, BondHub
 _LOGGER = logging.getLogger(__name__)
 
 PRESET_MODE_BREEZE = "Breeze"
+RANDOM_PRESETS = {"Random 1": 1, "Random 2": 2, "Random 3": 3}
 
 
 async def async_setup_entry(
@@ -51,6 +52,15 @@ async def async_setup_entry(
         SERVICE_SET_FAN_SPEED_TRACKED_STATE,
         {vol.Required("speed"): vol.All(vol.Number(scale=0), vol.Range(0, 100))},
         "async_set_speed_belief",
+    )
+
+    platform.async_register_entity_service(
+        SERVICE_CALL_ACTION,
+        {
+            vol.Required("action_name"): str,
+            vol.Optional("argument"): vol.Number(scale=0),
+        },
+        "async_call_action",
     )
 
     async_add_entities(
@@ -73,12 +83,16 @@ class BondFan(BondEntity, FanEntity):
         super().__init__(hub, device, bpup_subs)
         if self._device.has_action(Action.BREEZE_ON):
             self._attr_preset_modes = [PRESET_MODE_BREEZE]
+        if self._device.has_action(Action.OEM_RANDOM):
+            self._attr_preset_modes = list(RANDOM_PRESETS.keys())
         features = FanEntityFeature(0)
         if self._device.supports_speed():
             features |= FanEntityFeature.SET_SPEED
         if self._device.supports_direction():
             features |= FanEntityFeature.DIRECTION
-        if self._device.has_action(Action.BREEZE_ON):
+        if self._device.has_action(Action.BREEZE_ON) or self._device.has_action(
+            Action.OEM_RANDOM
+        ):
             features |= FanEntityFeature.PRESET_MODE
         self._attr_supported_features = features
 
@@ -88,7 +102,8 @@ class BondFan(BondEntity, FanEntity):
         self._speed = state.get("speed")
         self._direction = state.get("direction")
         breeze = state.get("breeze", [0, 0, 0])
-        self._attr_preset_mode = PRESET_MODE_BREEZE if breeze[0] else None
+        if self._device.has_action(Action.BREEZE_ON):
+            self._attr_preset_mode = PRESET_MODE_BREEZE if breeze[0] else None
 
     @property
     def _speed_range(self) -> tuple[int, int]:
@@ -153,6 +168,18 @@ class BondFan(BondEntity, FanEntity):
                 f" {self.entity_id}.  Code: {ex.status}  Message: {ex.message}"
             ) from ex
 
+    async def async_call_action(
+        self, action_name: str, argument: int | None = None
+    ) -> None:
+        """Call action for the fan."""
+        _LOGGER.debug(
+            "async_call_action called with action %s, argument %s",
+            action_name,
+            argument,
+        )
+        action = Action(action_name, argument)
+        await self._hub.bond.action(self._device.device_id, action)
+
     async def async_set_speed_belief(self, speed: int) -> None:
         """Set the believed speed for the fan."""
         _LOGGER.debug("async_set_speed_belief called with percentage %s", speed)
@@ -196,7 +223,15 @@ class BondFan(BondEntity, FanEntity):
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the preset mode of the fan."""
-        await self._hub.bond.action(self._device.device_id, Action(Action.BREEZE_ON))
+        if self._device.has_action(Action.OEM_RANDOM):
+            await self._hub.bond.action(
+                self._device.device_id,
+                Action(Action.OEM_RANDOM, RANDOM_PRESETS[preset_mode]),
+            )
+        else:
+            await self._hub.bond.action(
+                self._device.device_id, Action(Action.BREEZE_ON)
+            )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the fan off."""

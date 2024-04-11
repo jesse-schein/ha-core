@@ -19,6 +19,30 @@ set_fan_speed_tracked_state:
           step: 1
           mode: slider
 
+call_action:
+  fields:
+    entity_id:
+      example: "fan.living_room_fan"
+      required: true
+      selector:
+        entity:
+          integration: bond
+          domain: fan
+    action_name:
+      required: true
+      example: OEMRandom
+      selector:
+        text:
+    argument:
+      required: false
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 9
+          mode: box
+
+
 set_switch_power_tracked_state:
   fields:
     entity_id:
